@@ -26,6 +26,7 @@ if (frontendUrl.hostname === 'localhost') {
   frontendOrigins.push(frontendUrl.origin)
 }
 const isProduction = process.env.NODE_ENV === 'production'
+const sessionSameSite = process.env.SESSION_SAME_SITE || (isProduction ? 'none' : 'lax')
 if (!isProduction) frontendOrigins.push(/^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/)
 const uploadDir = fileURLToPath(new URL('../uploads/', import.meta.url))
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required. Copy backend/.env.example to backend/.env and configure it.')
@@ -42,7 +43,7 @@ app.use(session({
   name: 'ecoreport.sid', secret: process.env.SESSION_SECRET,
   store: new PgSession({ pool, tableName: 'user_sessions', createTableIfMissing: true }),
   resave: false, saveUninitialized: false,
-  cookie: { httpOnly: true, secure: isProduction, sameSite: 'lax', maxAge: 1000 * 60 * 60 * 24 * 7 },
+  cookie: { httpOnly: true, secure: isProduction, sameSite: sessionSameSite, maxAge: 1000 * 60 * 60 * 24 * 7 },
 }))
 
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false })
@@ -127,7 +128,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 app.post('/api/auth/logout', (req, res, next) => {
   req.session.destroy(error => {
     if (error) return next(error)
-    res.clearCookie('ecoreport.sid', { httpOnly: true, secure: isProduction, sameSite: 'lax' })
+    res.clearCookie('ecoreport.sid', { httpOnly: true, secure: isProduction, sameSite: sessionSameSite })
     res.status(204).end()
   })
 })

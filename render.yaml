@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: ecoreport-api
+    runtime: node
+    plan: free
+    region: oregon
+    rootDir: backend
+    buildCommand: npm ci
+    preDeployCommand: npm run db:init
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: FRONTEND_ORIGIN
+        value: https://sreeyanskurup288.github.io
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ecoreport-db
+          property: connectionString
+
+databases:
+  - name: ecoreport-db
+    databaseName: ecoreport
+    plan: free
+    region: oregon
