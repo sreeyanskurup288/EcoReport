@@ -25,6 +25,14 @@ services:
         sync: false
       - key: ADMIN_NAME
         sync: false
+      - key: DEMO_USER_EMAIL
+        sync: false
+      - key: DEMO_USER_PASSWORD
+        sync: false
+      - key: DEMO_USER_NAME
+        sync: false
+      - key: SEED_DEMO_DATA
+        value: "true"
 
 databases:
   - name: ecoreport-db
