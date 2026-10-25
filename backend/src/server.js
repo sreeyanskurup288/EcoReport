@@ -63,6 +63,12 @@ const validEmail = email => typeof email === 'string' && email.trim().length <= 
 const validReportTypes = new Set(['Waste', 'Water', 'Air', 'Noise', 'Trees', 'Drainage', 'Other'])
 const validSeverities = new Set(['Low', 'Medium', 'High'])
 const validStatuses = new Set(['Pending', 'In Progress', 'Resolved'])
+function isGoogleMapsUrl(value) {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && (url.hostname === 'maps.google.com' || url.hostname.endsWith('.google.com') || url.hostname === 'goo.gl' || url.hostname.endsWith('.goo.gl'))
+  } catch { return false }
+}
 
 function requireUser(req, res, next) {
   if (!req.session.userId) return res.status(401).json({ message: 'Sign in to continue.' })
@@ -70,6 +76,10 @@ function requireUser(req, res, next) {
 }
 function requireModerator(req, res, next) {
   if (!['moderator', 'admin'].includes(req.session.role)) return res.status(403).json({ message: 'Moderator permission is required.' })
+  next()
+}
+function requireAdmin(req, res, next) {
+  if (req.session.role !== 'admin') return res.status(403).json({ message: 'Administrator permission is required.' })
   next()
 }
 function parseNullableNumber(value) {
@@ -80,13 +90,13 @@ function parseNullableNumber(value) {
 function reportFromRow(row) {
   return {
     id: row.report_code, user_id: row.user_id, type: row.type, description: row.description,
-    location: row.location, latitude: row.latitude, longitude: row.longitude, severity: row.severity,
+    location: row.location, gmaps_url: row.gmaps_url, latitude: row.latitude, longitude: row.longitude, severity: row.severity,
     status: row.status, photo_url: row.photo_url, created_at: row.created_at, updated_at: row.updated_at,
     submitter: row.submitter,
   }
 }
 const reportSelect = `SELECT r.id, r.report_code, r.user_id, r.type, r.description, r.location, r.latitude, r.longitude,
-  r.severity, r.status, r.photo_url, r.observed_on, r.created_at, r.updated_at, u.name AS submitter
+  r.gmaps_url, r.severity, r.status, r.photo_url, r.observed_on, r.created_at, r.updated_at, u.name AS submitter
   FROM reports r JOIN users u ON u.id = r.user_id`
 
 app.get('/api/health', async (_req, res) => {
@@ -114,11 +124,12 @@ app.post('/api/auth/signup', authLimiter, async (req, res) => {
 })
 
 app.post('/api/auth/login', authLimiter, async (req, res) => {
-  const { email, password } = req.body || {}
+  const { email, password, role = 'user' } = req.body || {}
   const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : ''
-  if (!validEmail(cleanEmail) || typeof password !== 'string') return res.status(400).json({ message: 'Enter a valid email and password.' })
+  if (!validEmail(cleanEmail) || typeof password !== 'string' || !['user', 'admin'].includes(role)) return res.status(400).json({ message: 'Enter a valid email, password, and account type.' })
   const { rows } = await pool.query('SELECT id, name, email, role, created_at, password_hash FROM users WHERE email = $1', [cleanEmail])
   if (!rows[0] || !(await bcrypt.compare(password, rows[0].password_hash))) return res.status(401).json({ message: 'Email or password is incorrect.' })
+  if (rows[0].role !== role) return res.status(403).json({ message: role === 'admin' ? 'This account does not have administrator access.' : 'Use the administrator login for this account.' })
   await new Promise((resolve, reject) => req.session.regenerate(error => error ? reject(error) : resolve()))
   req.session.userId = rows[0].id
   req.session.role = rows[0].role
@@ -140,13 +151,17 @@ app.get('/api/auth/me', async (req, res) => {
   res.json({ user: publicUser(rows[0]) })
 })
 
-app.get('/api/reports', async (_req, res) => {
-  const { rows } = await pool.query(`${reportSelect} ORDER BY r.created_at DESC`)
+app.get('/api/reports', requireUser, async (req, res) => {
+  const where = req.session.role === 'admin' ? '' : ' WHERE r.user_id = $1'
+  const params = req.session.role === 'admin' ? [] : [req.session.userId]
+  const { rows } = await pool.query(`${reportSelect}${where} ORDER BY r.created_at DESC`, params)
   res.json({ reports: rows.map(reportFromRow) })
 })
 
-app.get('/api/reports/:id', async (req, res) => {
-  const { rows } = await pool.query(`${reportSelect} WHERE r.report_code = $1`, [req.params.id])
+app.get('/api/reports/:id', requireUser, async (req, res) => {
+  const access = req.session.role === 'admin' ? '' : ' AND r.user_id = $2'
+  const params = req.session.role === 'admin' ? [req.params.id] : [req.params.id, req.session.userId]
+  const { rows } = await pool.query(`${reportSelect} WHERE r.report_code = $1${access}`, params)
   if (!rows[0]) return res.status(404).json({ message: 'Report not found.' })
   const report = reportFromRow(rows[0])
   const history = await pool.query(`SELECT s.id, r.report_code AS report_id, COALESCE(u.name, 'EcoWatch team') AS changed_by,
@@ -157,12 +172,19 @@ app.get('/api/reports/:id', async (req, res) => {
   res.json({ report })
 })
 
+app.get('/api/admin/users', requireUser, requireAdmin, async (_req, res) => {
+  const { rows } = await pool.query(`SELECT u.id, u.name, u.email, u.role, u.created_at,
+    COUNT(r.id)::int AS report_count FROM users u LEFT JOIN reports r ON r.user_id = u.id
+    GROUP BY u.id ORDER BY u.created_at DESC`)
+  res.json({ users: rows })
+})
+
 app.post('/api/reports', requireUser, photoUpload.single('photo'), async (req, res) => {
-  const { type, description, location, severity = 'Medium', date } = req.body || {}
+  const { type, description, location, gmaps_url: gmapsUrl, severity = 'Medium', date } = req.body || {}
   const latitude = parseNullableNumber(req.body?.latitude)
   const longitude = parseNullableNumber(req.body?.longitude)
-  if (!validReportTypes.has(type) || typeof description !== 'string' || description.trim().length < 12 || description.length > 1000 || typeof location !== 'string' || !location.trim() || location.trim().length > 180 || !validSeverities.has(severity)) {
-    return res.status(400).json({ message: 'Check the issue type, description, location, and severity fields.' })
+  if (!validReportTypes.has(type) || typeof description !== 'string' || description.trim().length < 12 || description.length > 1000 || typeof location !== 'string' || !location.trim() || location.trim().length > 180 || !isGoogleMapsUrl(gmapsUrl) || !validSeverities.has(severity)) {
+    return res.status(400).json({ message: 'Choose an issue type, describe it, and provide a valid Google Maps link.' })
   }
   if (Number.isNaN(latitude) || Number.isNaN(longitude) || ((latitude === null) !== (longitude === null)) || (latitude !== null && (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180))) {
     return res.status(400).json({ message: 'Provide both valid latitude and longitude values, or leave both blank.' })
@@ -171,8 +193,8 @@ app.post('/api/reports', requireUser, photoUpload.single('photo'), async (req, r
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
-    const { rows } = await client.query(`INSERT INTO reports (user_id, type, description, location, latitude, longitude, severity, photo_url, observed_on)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`, [req.session.userId, type, description.trim(), location.trim(), latitude, longitude, severity, req.file ? `/uploads/${req.file.filename}` : null, observedOn])
+    const { rows } = await client.query(`INSERT INTO reports (user_id, type, description, location, gmaps_url, latitude, longitude, severity, photo_url, observed_on)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`, [req.session.userId, type, description.trim(), location.trim(), gmapsUrl.trim(), latitude, longitude, severity, req.file ? `/uploads/${req.file.filename}` : null, observedOn])
     const reportDbId = rows[0].id
     await client.query('INSERT INTO report_status_updates (report_id, changed_by, old_status, new_status, note) VALUES ($1, $2, NULL, $3, $4)', [reportDbId, req.session.userId, 'Pending', 'Report received by the EcoWatch community.'])
     const report = await client.query(`${reportSelect} WHERE r.id = $1`, [reportDbId])
@@ -184,7 +206,7 @@ app.post('/api/reports', requireUser, photoUpload.single('photo'), async (req, r
   } finally { client.release() }
 })
 
-app.patch('/api/reports/:id/status', requireUser, requireModerator, async (req, res) => {
+app.patch('/api/reports/:id/status', requireUser, requireAdmin, async (req, res) => {
   const { status, note = '' } = req.body || {}
   if (!validStatuses.has(status) || typeof note !== 'string' || note.length > 500) return res.status(400).json({ message: 'Choose a valid status and a note under 500 characters.' })
   const client = await pool.connect()
@@ -209,7 +231,7 @@ app.patch('/api/reports/:id/status', requireUser, requireModerator, async (req, 
   } finally { client.release() }
 })
 
-app.get('/api/analytics/summary', async (_req, res) => {
+app.get('/api/analytics/summary', requireUser, requireAdmin, async (_req, res) => {
   const { rows } = await pool.query(`SELECT COUNT(*)::int AS total,
     COUNT(*) FILTER (WHERE status = 'Pending')::int AS pending,
     COUNT(*) FILTER (WHERE status = 'In Progress')::int AS in_progress,

@@ -1072,3 +1072,16 @@ button:disabled { opacity: .65; cursor: wait; }
 .state-tooltip { background: #203b4b; border: 0; border-radius: 3px; color: #fff; box-shadow: 0 4px 10px rgba(16,37,48,.18); font-size: 11px; line-height: 1.35; padding: 7px 9px; }.state-tooltip:before { border-top-color: #203b4b; }
 .gis-map .leaflet-interactive { transition: fill-opacity .15s, stroke-width .15s; }
 @media (max-width: 850px) { .gis-layout { grid-template-columns: 1fr; }.state-panel, .state-empty { min-height: 0; }.state-empty { padding: 24px; }.map-toolbar { flex-wrap: wrap; }.map-toolbar > div, .gis-search { flex-basis: 100%; }.map-stat-row { grid-template-columns: repeat(2, 1fr); }.map-search-results { grid-template-columns: 1fr; } }
+
+/* Role controls, exports, and administrator data */
+.heading-actions { display: flex; gap: 9px; flex-wrap: wrap; }
+.detail-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin: 8px 0 14px; }
+.detail-actions a { text-decoration: none; }
+.admin-users-panel { margin-top: 18px; }
+.admin-users-table { overflow-x: auto; }
+.admin-user-row { min-width: 650px; display: grid; grid-template-columns: 1.25fr 1.55fr .75fr .55fr; gap: 14px; align-items: center; padding: 12px 14px; border-top: 1px solid var(--line); color: var(--ink); font-size: 12px; }
+.admin-user-row > span:first-child b, .admin-user-row > span:first-child small { display: block; }
+.admin-user-row > span:first-child small { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.admin-user-head { border-top: 0; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: 1px; }
+.role-badge { width: max-content; padding: 4px 8px; border-radius: 999px; background: #e3f1e5; color: var(--forest); font-size: 10px; font-weight: 800; text-transform: capitalize; }
+@media (max-width: 600px) { .heading-actions { width: 100%; }.heading-actions .button { flex: 1; }.detail-actions { justify-content: flex-start; } }

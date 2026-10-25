@@ -11,10 +11,11 @@ import './map.css'
 import {
   Activity, ArrowRight, ArrowUpRight, BarChart3, Check, CheckCircle2, ChevronDown, ChevronRight,
   CircleHelp, Clock3, CloudSun, FileText, Filter, Globe2, Leaf, LogIn, LogOut, MapPin, Menu, Plus,
-  Search, ShieldCheck, SlidersHorizontal, Sparkles, Trees, Upload, X, ExternalLink, type LucideIcon,
+  Search, ShieldCheck, SlidersHorizontal, Sparkles, Trees, Upload, X, ExternalLink, Download, Users, type LucideIcon,
 } from 'lucide-react'
 import { api, apiConfigured, ApiError } from './api'
-import type { Report, ReportStatus, User } from './types'
+import { exportReportPdf, exportReportsPdf } from './pdf'
+import type { AdminUser, Report, ReportStatus, User } from './types'
 
 type View = 'Home' | 'Dashboard' | 'Report an Issue' | 'Map' | 'Reports' | 'Analytics' | 'SDG Goals'
 
@@ -170,7 +171,7 @@ export default function App() {
   const [preview, setPreview] = useState(true)
   const [user, setUser] = useState<User | null>(null)
   const [authOpen, setAuthOpen] = useState(false)
-  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login')
+  const [authMode, setAuthMode] = useState<'user-login' | 'admin-login' | 'signup'>('user-login')
   const [authBusy, setAuthBusy] = useState(false)
   const [authError, setAuthError] = useState('')
   const [mobileNav, setMobileNav] = useState(false)
@@ -181,6 +182,7 @@ export default function App() {
   const [filterStatus, setFilterStatus] = useState('All')
   const [filterType, setFilterType] = useState('All issues')
   const [loading, setLoading] = useState(false)
+  const [adminUsers, setAdminUsers] = useState<AdminUser[]>([])
 
   useEffect(() => {
     if (!apiConfigured) { setPreview(true); return }
@@ -188,10 +190,14 @@ export default function App() {
       if (err.status === 401) setPreview(false)
       else setApiNotice(err.message)
     })
-    api.reports().then(({ reports: data }) => { setReports(data); setPreview(false); setApiNotice('') }).catch((err: ApiError) => {
-      setPreview(true); setApiNotice(err.message)
-    })
   }, [])
+
+  useEffect(() => {
+    if (!apiConfigured || !user) return
+    api.reports().then(({ reports: data }) => { setReports(data); setPreview(false); setApiNotice('') }).catch((err: ApiError) => setApiNotice(err.message))
+    if (user.role === 'admin') api.adminUsers().then(({ users }) => setAdminUsers(users)).catch((err: ApiError) => setApiNotice(err.message))
+    else setAdminUsers([])
+  }, [user])
 
   useEffect(() => {
     if (!toast) return
@@ -217,7 +223,7 @@ export default function App() {
     setMobileNav(false)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
-  function openAuth(mode: 'login' | 'signup' = 'login') {
+  function openAuth(mode: 'user-login' | 'admin-login' | 'signup' = 'user-login') {
     setAuthMode(mode)
     setAuthError('')
     setAuthOpen(true)
@@ -230,7 +236,7 @@ export default function App() {
     try {
       const result = authMode === 'signup'
         ? await api.signup({ name: String(values.get('name')).trim(), email: String(values.get('email')).trim(), password: String(values.get('password')) })
-        : await api.login({ email: String(values.get('email')).trim(), password: String(values.get('password')) })
+        : await api.login({ email: String(values.get('email')).trim(), password: String(values.get('password')), role: authMode === 'admin-login' ? 'admin' : 'user' })
       setUser(result.user)
       setAuthOpen(false)
       setPreview(false)
@@ -242,12 +248,12 @@ export default function App() {
     }
   }
   async function logout() {
-    try { await api.logout(); setUser(null); setToast('You are logged out.') }
+    try { await api.logout(); setUser(null); setReports([]); setAdminUsers([]); setToast('You are logged out.') }
     catch (e) { setToast(e instanceof Error ? e.message : 'Could not log out.') }
   }
   async function submitReport(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!user) { openAuth('login'); setToast('Sign in to submit a report.'); return }
+    if (!user) { openAuth('user-login'); setToast('Sign in to submit a report.'); return }
     setLoading(true)
     const formElement = event.currentTarget
     const form = new FormData(formElement)
@@ -268,7 +274,7 @@ export default function App() {
     }
   }
   async function setStatus(report: Report, status: ReportStatus) {
-    if (!user || !['moderator', 'admin'].includes(user.role)) return
+    if (!user || user.role !== 'admin') return
     try {
       const { report: updated } = await api.updateStatus(report.id, status, 'Status updated by EcoWatch team.')
       setReports(rs => rs.map(r => r.id === updated.id ? updated : r))
@@ -296,7 +302,7 @@ export default function App() {
           {mobileNav ? <X /> : <Menu />}
         </button>
         <nav className={`topnav ${mobileNav ? 'open' : ''}`} aria-label="Main navigation">
-          {nav.map(({ name }) => (
+          {(user?.role === 'user' ? nav.filter(item => ['Home', 'Dashboard', 'Report an Issue', 'Reports'].includes(item.name)) : nav).map(({ name }) => (
             <button key={name} className={view === name ? 'nav-active' : ''} onClick={() => go(name)}>
               {name === 'Report an Issue' ? 'Report issue' : name}
             </button>
@@ -314,7 +320,7 @@ export default function App() {
             </>
           ) : (
             <>
-              <button className="text-button" onClick={() => openAuth('login')}>Log in</button>
+              <button className="text-button" onClick={() => openAuth('user-login')}>Log in</button>
               <button className="button button-dark button-small" onClick={() => openAuth('signup')}>
                 Join the community <ArrowRight size={15} />
               </button>
@@ -333,7 +339,7 @@ export default function App() {
       <div className="layout">
         <aside className={`sidebar ${mobileNav ? 'sidebar-open' : ''}`}>
           <div className="side-label">YOUR SPACE</div>
-          {nav.map(({ name, icon: Icon }) => (
+          {(user?.role === 'user' ? nav.filter(item => ['Home', 'Dashboard', 'Report an Issue', 'Reports'].includes(item.name)) : nav).map(({ name, icon: Icon }) => (
             <button key={name} className={`side-link ${view === name ? 'selected' : ''}`} onClick={() => go(name)}>
               <Icon size={18} strokeWidth={1.8} />
               <span>{name}</span>
@@ -357,10 +363,10 @@ export default function App() {
             <motion.div key={view} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}>
               {view === 'Home' && <Home reports={reports} stats={stats} onNavigate={go} onOpenReport={setDetail} />}
               {view === 'Dashboard' && (user?.role === 'admin'
-                ? <AdminDashboard reports={reports} stats={stats} onNavigate={go} onOpenReport={setDetail} onStatus={setStatus} />
+                ? <AdminDashboard reports={reports} stats={stats} users={adminUsers} onNavigate={go} onOpenReport={setDetail} onStatus={setStatus} onExport={() => exportReportsPdf(reports, 'EcoReport admin report export')} />
                 : <Dashboard reports={reports} stats={stats} onNavigate={go} onOpenReport={setDetail} />)}
-              {view === 'Report an Issue' && <ReportForm user={user} onSubmit={submitReport} onLogin={() => openAuth('login')} busy={loading} />}
-              {view === 'Reports' && <ReportsView reports={filtered} search={search} setSearch={setSearch} status={filterStatus} setStatus={setFilterStatus} issueType={filterType} setIssueType={setFilterType} onOpen={setDetail} onCreate={() => go('Report an Issue')} />}
+              {view === 'Report an Issue' && <ReportForm user={user} onSubmit={submitReport} onLogin={() => openAuth('user-login')} busy={loading} />}
+              {view === 'Reports' && <ReportsView reports={filtered} search={search} setSearch={setSearch} status={filterStatus} setStatus={setFilterStatus} issueType={filterType} setIssueType={setFilterType} onOpen={setDetail} onCreate={() => go('Report an Issue')} onExport={() => exportReportsPdf(filtered, user?.role === 'admin' ? 'EcoReport admin report export' : 'My EcoReport submissions')} />}
               {view === 'Map' && <MapView reports={filtered} issueType={filterType} setIssueType={setFilterType} status={filterStatus} setStatus={setFilterStatus} onOpen={setDetail} />}
               {view === 'Analytics' && <Analytics reports={reports} stats={stats} />}
               {view === 'SDG Goals' && <SdgPage />}
@@ -392,9 +398,11 @@ export default function App() {
         {detail && (
           <ReportModal
             report={detail}
-            canModerate={!!user && ['moderator', 'admin'].includes(user.role)}
+            canModerate={user?.role === 'admin'}
+            canExport={!!user && (user.role === 'admin' || user.id === detail.user_id)}
             onClose={() => setDetail(null)}
             onStatus={s => setStatus(detail, s)}
+            onExport={() => exportReportPdf(detail)}
           />
         )}
       </AnimatePresence>
@@ -613,12 +621,14 @@ function Dashboard({ reports, stats, onNavigate, onOpenReport }: {
   )
 }
 
-function AdminDashboard({ reports, stats, onNavigate, onOpenReport, onStatus }: {
+function AdminDashboard({ reports, stats, users, onNavigate, onOpenReport, onStatus, onExport }: {
   reports: Report[]
   stats: { total: number; pending: number; progress: number; resolved: number }
+  users: AdminUser[]
   onNavigate: (v: View) => void
   onOpenReport: (r: Report) => void
   onStatus: (report: Report, status: ReportStatus) => void
+  onExport: () => void
 }) {
   return (
     <div className="page-wrap">
@@ -626,13 +636,13 @@ function AdminDashboard({ reports, stats, onNavigate, onOpenReport, onStatus }: 
         eyebrow="ADMIN CONTROL CENTER"
         title="Admin Dashboard"
         text="Review community reports and keep environmental issues moving toward resolution."
-        action={<button className="button button-dark" onClick={() => onNavigate('Reports')}><FileText size={16} /> Manage reports</button>}
+        action={<div className="heading-actions"><button className="button button-plain" onClick={onExport}><Download size={16} /> Export PDF</button><button className="button button-dark" onClick={() => onNavigate('Reports')}><FileText size={16} /> Manage reports</button></div>}
       />
       <div className="welcome-strip">
         <div className="welcome-mark"><ShieldCheck size={19} /></div>
         <div>
           <b>Welcome, administrator.</b>
-          <p>You can review reports and update their progress from this dashboard.</p>
+          <p>You can review user details, update report progress, and export the report queue.</p>
         </div>
         <span className="welcome-count"><b>{stats.total}</b> total reports</span>
       </div>
@@ -661,6 +671,14 @@ function AdminDashboard({ reports, stats, onNavigate, onOpenReport, onStatus }: 
               </select>
             </div>
           ))}
+        </div>
+      </section>
+      <section className="panel recent-panel admin-users-panel">
+        <div className="panel-head"><div><span className="eyebrow">REGISTERED ACCOUNTS</span><h2>User details</h2></div><span className="welcome-count"><b>{users.length}</b> accounts</span></div>
+        <div className="admin-users-table">
+          <div className="admin-user-row admin-user-head"><span>NAME</span><span>EMAIL</span><span>ROLE</span><span>REPORTS</span></div>
+          {users.map(account => <div className="admin-user-row" key={account.id}><span><b>{account.name}</b><small>{account.created_at ? readableDate(account.created_at) : '—'}</small></span><span>{account.email}</span><span className="role-badge">{account.role}</span><span>{account.report_count}</span></div>)}
+          {!users.length && <div className="empty-state"><Users size={22} /><b>No registered accounts yet</b></div>}
         </div>
       </section>
     </div>
@@ -733,6 +751,11 @@ function ReportForm({ user, onSubmit, onLogin, busy }: {
             <span>Location or area <i>*</i></span>
             <div className="input-icon"><MapPin size={17} /><input name="location" required maxLength={180} placeholder="Street, landmark, neighborhood" /></div>
           </label>
+          <label className="field field-full">
+            <span>Google Maps location <i>*</i></span>
+            <div className="input-icon"><ExternalLink size={17} /><input name="gmaps_url" type="url" required placeholder="Paste the Google Maps link for the issue location" /></div>
+            <small>Open Google Maps, choose the exact place, tap Share, and paste the link here.</small>
+          </label>
           <label className="field">
             <span>Date noticed</span>
             <input type="date" name="date" defaultValue={new Date().toISOString().slice(0, 10)} />
@@ -763,7 +786,7 @@ function ReportForm({ user, onSubmit, onLogin, busy }: {
   )
 }
 
-function ReportsView({ reports, search, setSearch, status, setStatus, issueType, setIssueType, onOpen, onCreate }: {
+function ReportsView({ reports, search, setSearch, status, setStatus, issueType, setIssueType, onOpen, onCreate, onExport }: {
   reports: Report[]
   search: string
   setSearch: (s: string) => void
@@ -773,6 +796,7 @@ function ReportsView({ reports, search, setSearch, status, setStatus, issueType,
   setIssueType: (s: string) => void
   onOpen: (r: Report) => void
   onCreate: () => void
+  onExport: () => void
 }) {
   return (
     <div className="page-wrap">
@@ -780,7 +804,7 @@ function ReportsView({ reports, search, setSearch, status, setStatus, issueType,
         eyebrow="THE NEIGHBORHOOD JOURNAL"
         title="Community reports"
         text="Browse issues shared by people in your area."
-        action={<button className="button button-dark" onClick={onCreate}><Plus size={16} /> New report</button>}
+        action={<div className="heading-actions"><button className="button button-plain" onClick={onExport}><Download size={16} /> Export PDF</button><button className="button button-dark" onClick={onCreate}><Plus size={16} /> New report</button></div>}
       />
       <div className="toolbar panel">
         <div className="search-box">
@@ -992,8 +1016,8 @@ function SdgPage() {
 }
 
 function AuthModal({ mode, setMode, busy, error, apiReady, onClose, onSubmit }: {
-  mode: 'login' | 'signup'
-  setMode: (m: 'login' | 'signup') => void
+  mode: 'user-login' | 'admin-login' | 'signup'
+  setMode: (m: 'user-login' | 'admin-login' | 'signup') => void
   busy: boolean
   error: string
   apiReady: boolean
@@ -1006,8 +1030,8 @@ function AuthModal({ mode, setMode, busy, error, apiReady, onClose, onSubmit }: 
         <button className="modal-close" onClick={onClose} aria-label="Close"><X size={19} /></button>
         <div className="auth-emblem"><Leaf size={22} /></div>
         <span className="eyebrow">A COMMUNITY THAT NOTICES</span>
-        <h2 id="auth-title">{mode === 'login' ? 'Welcome back.' : 'Join your community.'}</h2>
-        <p>{mode === 'login' ? 'Sign in to submit reports and follow local updates.' : 'Create an account to share what you notice.'}</p>
+        <h2 id="auth-title">{mode === 'signup' ? 'Join your community.' : mode === 'admin-login' ? 'Administrator access.' : 'Welcome back.'}</h2>
+        <p>{mode === 'signup' ? 'Create a user account to submit environmental reports.' : mode === 'admin-login' ? 'Sign in to review users, reports, and status updates.' : 'Sign in to submit reports and follow your own updates.'}</p>
         {!apiReady && (
           <div className="backend-hint">
             <CircleHelp size={16} />
@@ -1018,16 +1042,17 @@ function AuthModal({ mode, setMode, busy, error, apiReady, onClose, onSubmit }: 
           </div>
         )}
         <div className="auth-tabs">
-          <button className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Log in</button>
+          <button className={mode === 'user-login' ? 'active' : ''} onClick={() => setMode('user-login')}>User login</button>
+          <button className={mode === 'admin-login' ? 'active' : ''} onClick={() => setMode('admin-login')}>Admin login</button>
           <button className={mode === 'signup' ? 'active' : ''} onClick={() => setMode('signup')}>Sign up</button>
         </div>
         <form onSubmit={onSubmit} className="auth-form">
           {mode === 'signup' && <label className="field"><span>Full name</span><input name="name" autoComplete="name" required placeholder="Your name" /></label>}
           <label className="field"><span>Email</span><input name="email" type="email" autoComplete="email" required placeholder="you@example.com" /></label>
-          <label className="field"><span>Password</span><input name="password" type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required minLength={8} placeholder="At least 8 characters" /></label>
+          <label className="field"><span>Password</span><input name="password" type="password" autoComplete={mode === 'user-login' || mode === 'admin-login' ? 'current-password' : 'new-password'} required minLength={8} placeholder="At least 8 characters" /></label>
           {error && <div className="form-error" role="alert">{error}</div>}
           <button className="button button-dark auth-submit" disabled={busy || !apiReady}>
-            {busy ? 'Please wait…' : mode === 'login' ? 'Log in to EcoReport' : 'Create account'}
+            {busy ? 'Please wait…' : mode === 'signup' ? 'Create user account' : mode === 'admin-login' ? 'Log in as administrator' : 'Log in as user'}
             {apiReady && !busy && <ArrowRight size={16} />}
           </button>
         </form>
@@ -1037,11 +1062,13 @@ function AuthModal({ mode, setMode, busy, error, apiReady, onClose, onSubmit }: 
   )
 }
 
-function ReportModal({ report, canModerate, onClose, onStatus }: {
+function ReportModal({ report, canModerate, canExport, onClose, onStatus, onExport }: {
   report: Report
   canModerate: boolean
+  canExport: boolean
   onClose: () => void
   onStatus: (s: ReportStatus) => void
+  onExport: () => void
 }) {
   const updates = report.updates || [{ id: 'created', report_id: report.id, changed_by: report.submitter || 'Community member', old_status: null, new_status: 'Pending' as ReportStatus, note: 'Report shared with the community.', created_at: report.created_at }]
   return (
@@ -1051,6 +1078,10 @@ function ReportModal({ report, canModerate, onClose, onStatus }: {
         <div className="detail-topline">
           <span className="eyebrow">COMMUNITY REPORT · {report.id}</span>
           <span className={`status-pill ${statusClass[report.status]}`}>{report.status}</span>
+        </div>
+        <div className="detail-actions">
+          {canExport && <button className="button button-plain button-small" onClick={onExport}><Download size={15} /> Export PDF</button>}
+          {report.gmaps_url && <a className="button button-plain button-small" href={report.gmaps_url} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Open in Google Maps</a>}
         </div>
         <div className="detail-title-line">
           <span className={`issue-symbol issue-${report.type.toLowerCase()}`}>{typeIcon[report.type] || '✳'}</span>

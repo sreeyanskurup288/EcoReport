@@ -1,4 +1,4 @@
-import type { Report, User, ReportStatus } from './types'
+import type { AdminUser, Report, User, ReportStatus } from './types'
 
 // Local development should work even if Vite was started before .env was created.
 // Deployments can still override this with VITE_API_BASE_URL.
@@ -22,9 +22,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export const api = {
   me: () => request<{ user: User }>('/api/auth/me'),
   signup: (input: { name: string; email: string; password: string }) => request<{ user: User }>('/api/auth/signup', { method: 'POST', body: JSON.stringify(input) }),
-  login: (input: { email: string; password: string }) => request<{ user: User }>('/api/auth/login', { method: 'POST', body: JSON.stringify(input) }),
+  login: (input: { email: string; password: string; role: 'user' | 'admin' }) => request<{ user: User }>('/api/auth/login', { method: 'POST', body: JSON.stringify(input) }),
   logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
   reports: () => request<{ reports: Report[] }>('/api/reports'),
+  adminUsers: () => request<{ users: AdminUser[] }>('/api/admin/users'),
   report: (id: string) => request<{ report: Report }>(`/api/reports/${encodeURIComponent(id)}`),
   createReport: (input: FormData) => request<{ report: Report }>('/api/reports', { method: 'POST', body: input }),
   updateStatus: (id: string, status: ReportStatus, note: string) => request<{ report: Report }>(`/api/reports/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status, note }) }),

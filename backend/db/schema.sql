@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS reports (
   type VARCHAR(30) NOT NULL CHECK (type IN ('Waste', 'Water', 'Air', 'Noise', 'Trees', 'Drainage', 'Other')),
   description VARCHAR(1000) NOT NULL,
   location VARCHAR(180) NOT NULL,
+  gmaps_url TEXT,
   latitude DOUBLE PRECISION CHECK (latitude IS NULL OR latitude BETWEEN -90 AND 90),
   longitude DOUBLE PRECISION CHECK (longitude IS NULL OR longitude BETWEEN -180 AND 180),
   severity report_severity NOT NULL DEFAULT 'Medium',
@@ -38,6 +39,8 @@ CREATE TABLE IF NOT EXISTS reports (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CHECK ((latitude IS NULL) = (longitude IS NULL))
 );
+
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS gmaps_url TEXT;
 
 CREATE TABLE IF NOT EXISTS report_status_updates (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
