@@ -290,7 +290,16 @@ export default function App() {
       formElement.reset()
       setPreview(false)
       setApiNotice('')
-      setToast('Your report has been submitted.')
+      // Confirm the committed row before changing views. This prevents a
+      // refresh/race from making a successfully saved report disappear.
+      try {
+        const { report: saved } = await api.report(report.id)
+        setReports(current => [saved, ...current.filter(item => item.id !== saved.id)])
+      } catch {
+        // The create response is already committed; keep it visible if the
+        // follow-up detail request is temporarily unavailable.
+      }
+      setToast(`Report ${report.id} was saved successfully.`)
       go('Reports')
     } catch (e) {
       setToast(e instanceof Error ? e.message : 'Could not submit report. Please try again.')
