@@ -9,7 +9,7 @@ import {
 import 'leaflet/dist/leaflet.css'
 import './map.css'
 import {
-  Activity, ArrowRight, ArrowUpRight, BarChart3, Check, CheckCircle2, ChevronDown, ChevronRight,
+  Activity, ArrowRight, ArrowUpRight, BarChart3, Bell, Check, CheckCircle2, ChevronDown, ChevronRight,
   CircleHelp, Clock3, CloudSun, FileText, Filter, Globe2, Leaf, LogIn, LogOut, MapPin, Menu, Plus,
   Search, ShieldCheck, SlidersHorizontal, Sparkles, Trees, Upload, X, ExternalLink, Download, Users, type LucideIcon,
 } from 'lucide-react'
@@ -17,7 +17,7 @@ import { api, apiConfigured, ApiError } from './api'
 import { exportReportPdf, exportReportsPdf } from './pdf'
 import type { AdminUser, Report, ReportStatus, User } from './types'
 
-type View = 'Home' | 'Dashboard' | 'Report an Issue' | 'Map' | 'Reports' | 'Analytics' | 'SDG Goals'
+type View = 'Home' | 'Dashboard' | 'Report an Issue' | 'Map' | 'Reports' | 'Analytics' | 'SDG Goals' | 'Notifications' | 'About EcoReport'
 
 const nav: { name: View; icon: LucideIcon }[] = [
   { name: 'Home', icon: Leaf },
@@ -27,6 +27,13 @@ const nav: { name: View; icon: LucideIcon }[] = [
   { name: 'Reports', icon: FileText },
   { name: 'Analytics', icon: BarChart3 },
   { name: 'SDG Goals', icon: Globe2 },
+]
+
+const topNav: { label: string; view: View }[] = [
+  { label: 'Home', view: 'Home' },
+  { label: 'Overview', view: 'Dashboard' },
+  { label: 'Notifications', view: 'Notifications' },
+  { label: 'About EcoReport', view: 'About EcoReport' },
 ]
 
 const sampleReports: Report[] = [
@@ -347,9 +354,9 @@ export default function App() {
           {mobileNav ? <X /> : <Menu />}
         </button>
         <nav className={`topnav ${mobileNav ? 'open' : ''}`} aria-label="Main navigation">
-          {nav.filter(item => item.name !== 'Dashboard' && (user?.role !== 'user' || ['Home', 'Report an Issue', 'Reports'].includes(item.name))).map(({ name }) => (
-            <button key={name} className={view === name ? 'nav-active' : ''} onClick={() => go(name)}>
-              {name === 'Report an Issue' ? 'Report issue' : name}
+          {topNav.map(({ label, view: target }) => (
+            <button key={label} className={view === target || (target === 'About EcoReport' && view === 'SDG Goals') ? 'nav-active' : ''} onClick={() => go(target)}>
+              {label}
             </button>
           ))}
         </nav>
@@ -414,6 +421,8 @@ export default function App() {
               {view === 'Reports' && <ReportsView reports={filtered} search={search} setSearch={setSearch} status={filterStatus} setStatus={setFilterStatus} issueType={filterType} setIssueType={setFilterType} onOpen={openReport} onCreate={() => go('Report an Issue')} onExport={() => exportReportsPdf(filtered, user?.role === 'admin' ? 'EcoReport admin report export' : 'My EcoReport submissions')} />}
               {view === 'Map' && <MapView reports={filtered} issueType={filterType} setIssueType={setFilterType} status={filterStatus} setStatus={setFilterStatus} onOpen={openReport} />}
               {view === 'Analytics' && <Analytics reports={reports} stats={stats} />}
+              {view === 'Notifications' && <NotificationsView reports={reports} />}
+              {view === 'About EcoReport' && <SdgPage />}
               {view === 'SDG Goals' && <SdgPage />}
             </motion.div>
           </AnimatePresence>
@@ -662,6 +671,28 @@ function Dashboard({ reports, stats, onNavigate, onOpenReport }: {
         <p>“When we care enough to notice, we’re already part of the solution.”</p>
         <span>— EcoWatch community</span>
       </div>
+    </div>
+  )
+}
+
+function NotificationsView({ reports }: { reports: Report[] }) {
+  const notifications = [...reports]
+    .sort((a, b) => new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime())
+    .slice(0, 12)
+  return (
+    <div className="page-wrap">
+      <PageTitle eyebrow="YOUR ECOREPORT UPDATES" title="Notifications" text="Follow the latest activity and status changes on your reports." />
+      <section className="panel recent-panel">
+        <div className="panel-head"><div><span className="eyebrow">RECENT ACTIVITY</span><h2>Report updates</h2></div><Bell size={20} /></div>
+        {notifications.length ? notifications.map(report => (
+          <div className="report-row" key={report.id}>
+            <span className={`issue-symbol issue-${report.type.toLowerCase()}`}>{typeIcon[report.type] || '✳'}</span>
+            <span className="report-row-main"><b>{report.type} report · {report.id}</b><span>{report.location}</span></span>
+            <span className={`status-pill ${statusClass[report.status]}`}>{report.status}</span>
+            <span className="row-date">{readableDate(report.updated_at || report.created_at)}</span>
+          </div>
+        )) : <div className="empty-state"><Bell size={22} /><b>No notifications yet</b><span>Submit a report to see updates here.</span></div>}
+      </section>
     </div>
   )
 }
