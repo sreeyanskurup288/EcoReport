@@ -347,7 +347,7 @@ export default function App() {
           {mobileNav ? <X /> : <Menu />}
         </button>
         <nav className={`topnav ${mobileNav ? 'open' : ''}`} aria-label="Main navigation">
-          {(user?.role === 'user' ? nav.filter(item => ['Home', 'Dashboard', 'Report an Issue', 'Reports'].includes(item.name)) : nav).map(({ name }) => (
+          {nav.filter(item => item.name !== 'Dashboard' && (user?.role !== 'user' || ['Home', 'Report an Issue', 'Reports'].includes(item.name))).map(({ name }) => (
             <button key={name} className={view === name ? 'nav-active' : ''} onClick={() => go(name)}>
               {name === 'Report an Issue' ? 'Report issue' : name}
             </button>
