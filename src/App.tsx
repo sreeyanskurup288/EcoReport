@@ -183,6 +183,20 @@ export default function App() {
   const [filterType, setFilterType] = useState('All issues')
   const [loading, setLoading] = useState(false)
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([])
+  const [formKey, setFormKey] = useState(0)
+
+  async function refreshReports(currentUser: User) {
+    const { reports: data } = await api.reports()
+    setReports(data)
+    setPreview(false)
+    setApiNotice('')
+    if (currentUser.role === 'admin') {
+      const { users } = await api.adminUsers()
+      setAdminUsers(users)
+    } else {
+      setAdminUsers([])
+    }
+  }
 
   useEffect(() => {
     if (!apiConfigured) { setPreview(true); return }
@@ -194,9 +208,19 @@ export default function App() {
 
   useEffect(() => {
     if (!apiConfigured || !user) return
-    api.reports().then(({ reports: data }) => { setReports(data); setPreview(false); setApiNotice('') }).catch((err: ApiError) => setApiNotice(err.message))
-    if (user.role === 'admin') api.adminUsers().then(({ users }) => setAdminUsers(users)).catch((err: ApiError) => setApiNotice(err.message))
-    else setAdminUsers([])
+    let active = true
+    const refresh = () => refreshReports(user).catch((err: ApiError) => {
+      if (active) setApiNotice(err.message)
+    })
+    const onFocus = () => { void refresh() }
+    void refresh()
+    const interval = window.setInterval(refresh, 15000)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      active = false
+      window.clearInterval(interval)
+      window.removeEventListener('focus', onFocus)
+    }
   }, [user])
 
   useEffect(() => {
@@ -261,7 +285,8 @@ export default function App() {
     if (!photo?.size) form.delete('photo')
     try {
       const { report } = await api.createReport(form)
-      setReports(current => [report, ...current])
+      setReports(current => [report, ...current.filter(item => item.id !== report.id)])
+      setFormKey(key => key + 1)
       formElement.reset()
       setPreview(false)
       setApiNotice('')
@@ -271,6 +296,17 @@ export default function App() {
       setToast(e instanceof Error ? e.message : 'Could not submit report. Please try again.')
     } finally {
       setLoading(false)
+    }
+  }
+  async function openReport(report: Report) {
+    setDetail(report)
+    if (!apiConfigured || report.user_id === 'map') return
+    try {
+      const { report: full } = await api.report(report.id)
+      setDetail(current => current?.id === report.id ? full : current)
+      setReports(current => current.map(item => item.id === full.id ? { ...item, ...full } : item))
+    } catch {
+      setDetail(current => current?.id === report.id ? report : current)
     }
   }
   async function setStatus(report: Report, status: ReportStatus) {
@@ -361,13 +397,13 @@ export default function App() {
           {apiNotice && !preview && <div className="notice"><CloudSun size={17} /> {apiNotice}</div>}
           <AnimatePresence mode="wait">
             <motion.div key={view} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}>
-              {view === 'Home' && <Home reports={reports} stats={stats} onNavigate={go} onOpenReport={setDetail} />}
+              {view === 'Home' && <Home reports={reports} stats={stats} onNavigate={go} onOpenReport={openReport} />}
               {view === 'Dashboard' && (user?.role === 'admin'
-                ? <AdminDashboard reports={reports} stats={stats} users={adminUsers} onNavigate={go} onOpenReport={setDetail} onStatus={setStatus} onExport={() => exportReportsPdf(reports, 'EcoReport admin report export')} />
-                : <Dashboard reports={reports} stats={stats} onNavigate={go} onOpenReport={setDetail} />)}
-              {view === 'Report an Issue' && <ReportForm user={user} onSubmit={submitReport} onLogin={() => openAuth('user-login')} busy={loading} />}
-              {view === 'Reports' && <ReportsView reports={filtered} search={search} setSearch={setSearch} status={filterStatus} setStatus={setFilterStatus} issueType={filterType} setIssueType={setFilterType} onOpen={setDetail} onCreate={() => go('Report an Issue')} onExport={() => exportReportsPdf(filtered, user?.role === 'admin' ? 'EcoReport admin report export' : 'My EcoReport submissions')} />}
-              {view === 'Map' && <MapView reports={filtered} issueType={filterType} setIssueType={setFilterType} status={filterStatus} setStatus={setFilterStatus} onOpen={setDetail} />}
+                ? <AdminDashboard reports={reports} stats={stats} users={adminUsers} onNavigate={go} onOpenReport={openReport} onStatus={setStatus} onExport={() => exportReportsPdf(reports, 'EcoReport admin report export')} />
+                : <Dashboard reports={reports} stats={stats} onNavigate={go} onOpenReport={openReport} />)}
+              {view === 'Report an Issue' && <ReportForm key={formKey} user={user} onSubmit={submitReport} onLogin={() => openAuth('user-login')} busy={loading} />}
+              {view === 'Reports' && <ReportsView reports={filtered} search={search} setSearch={setSearch} status={filterStatus} setStatus={setFilterStatus} issueType={filterType} setIssueType={setFilterType} onOpen={openReport} onCreate={() => go('Report an Issue')} onExport={() => exportReportsPdf(filtered, user?.role === 'admin' ? 'EcoReport admin report export' : 'My EcoReport submissions')} />}
+              {view === 'Map' && <MapView reports={filtered} issueType={filterType} setIssueType={setFilterType} status={filterStatus} setStatus={setFilterStatus} onOpen={openReport} />}
               {view === 'Analytics' && <Analytics reports={reports} stats={stats} />}
               {view === 'SDG Goals' && <SdgPage />}
             </motion.div>
