@@ -11,6 +11,14 @@ EcoReport is a responsive React + TypeScript frontend for the Team EcoWatch envi
 
 The interface starts with sample data in preview mode. Copy `.env.example` to `.env` and set `VITE_API_BASE_URL` to your Express server URL when the backend is ready. The frontend sends cookies with requests; configure the API and CORS to support credentialed requests. Never put a database password or privileged server key in a `VITE_` variable.
 
+## Current architecture and implementation notes
+
+The repository currently contains a Vite React frontend and an Express/PostgreSQL backend; it does not contain a Spring Boot/Thymeleaf/H2 application. The implementation preserves this working architecture rather than introducing an unrelated Next.js migration. The frontend uses `src/location.ts` for click-triggered browser geolocation, OpenStreetMap Nominatim reverse geocoding, and automatic Google Maps links. Location permission is never requested until the user clicks **Use My Current Location**, and manual location entry remains available.
+
+Uploaded photos are stored by the API under `/uploads/`. The frontend resolves those paths against `VITE_API_BASE_URL` so reports opened from GitHub Pages can load images from the Render API. Render's local filesystem is temporary, so production deployments should use durable object storage for long-term photo retention.
+
+PDF export has been removed from the UI and codebase, including the `jspdf` dependency. Report creation, filtering, searching, image upload, map links, status updates, authentication, and admin permissions remain unchanged.
+
 ## API contract
 
 - `GET /api/auth/me` → `{ user }`
@@ -19,7 +27,7 @@ The interface starts with sample data in preview mode. Copy `.env.example` to `.
 - `POST /api/auth/logout` → `204 No Content`
 - `GET /api/reports` → `{ reports: Report[] }`
 - `GET /api/reports/:id` → `{ report: Report }`
-- `POST /api/reports` multipart fields: `type`, `description`, `location`, `severity`, `date`, optional `latitude`, `longitude`, `photo` → `{ report }`
+- `POST /api/reports` multipart fields: `type`, `description`, `location`, `gmaps_url`, `severity`, `date`, optional `latitude`, `longitude`, `photo` → `{ report }`
 - `PATCH /api/reports/:id/status` body `{ status, note }` → `{ report }` (moderator/admin only)
 - `GET /api/analytics/summary` → `{ summary }`
 

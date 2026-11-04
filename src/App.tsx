@@ -11,10 +11,10 @@ import './map.css'
 import {
   Activity, ArrowRight, ArrowUpRight, BarChart3, Bell, Check, CheckCircle2, ChevronDown, ChevronRight,
   CircleHelp, Clock3, CloudSun, FileText, Filter, Globe2, Leaf, LogIn, LogOut, MapPin, Menu, Plus,
-  Search, ShieldCheck, SlidersHorizontal, Sparkles, Trees, Upload, X, ExternalLink, Download, Users, type LucideIcon,
+  Search, ShieldCheck, SlidersHorizontal, Sparkles, Trees, Upload, X, ExternalLink, Users, type LucideIcon,
 } from 'lucide-react'
-import { api, apiConfigured, ApiError } from './api'
-import { exportReportPdf, exportReportsPdf } from './pdf'
+import { api, apiConfigured, ApiError, mediaUrl } from './api'
+import { formatAddress, getCurrentLocation, mapsUrl, reverseGeocode } from './location'
 import type { AdminUser, Report, ReportStatus, User } from './types'
 
 type View = 'Home' | 'Dashboard' | 'Report an Issue' | 'Map' | 'Reports' | 'Analytics' | 'SDG Goals' | 'Notifications' | 'About EcoReport'
@@ -415,10 +415,10 @@ export default function App() {
             <motion.div key={view} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}>
               {view === 'Home' && <Home reports={reports} stats={stats} onNavigate={go} onOpenReport={openReport} />}
               {view === 'Dashboard' && (user?.role === 'admin'
-                ? <AdminDashboard reports={reports} stats={stats} users={adminUsers} onNavigate={go} onOpenReport={openReport} onStatus={setStatus} onExport={() => exportReportsPdf(reports, 'EcoReport admin report export')} />
+                ? <AdminDashboard reports={reports} stats={stats} users={adminUsers} onNavigate={go} onOpenReport={openReport} onStatus={setStatus} />
                 : <Dashboard reports={reports} stats={stats} onNavigate={go} onOpenReport={openReport} />)}
               {view === 'Report an Issue' && <ReportForm key={formKey} user={user} onSubmit={submitReport} onLogin={() => openAuth('user-login')} busy={loading} />}
-              {view === 'Reports' && <ReportsView reports={filtered} search={search} setSearch={setSearch} status={filterStatus} setStatus={setFilterStatus} issueType={filterType} setIssueType={setFilterType} onOpen={openReport} onCreate={() => go('Report an Issue')} onExport={() => exportReportsPdf(filtered, user?.role === 'admin' ? 'EcoReport admin report export' : 'My EcoReport submissions')} />}
+              {view === 'Reports' && <ReportsView reports={filtered} search={search} setSearch={setSearch} status={filterStatus} setStatus={setFilterStatus} issueType={filterType} setIssueType={setFilterType} onOpen={openReport} onCreate={() => go('Report an Issue')} />}
               {view === 'Map' && <MapView reports={filtered} issueType={filterType} setIssueType={setFilterType} status={filterStatus} setStatus={setFilterStatus} onOpen={openReport} />}
               {view === 'Analytics' && <Analytics reports={reports} stats={stats} />}
               {view === 'Notifications' && <NotificationsView reports={reports} />}
@@ -453,10 +453,8 @@ export default function App() {
           <ReportModal
             report={detail}
             canModerate={user?.role === 'admin'}
-            canExport={!!user && (user.role === 'admin' || user.id === detail.user_id)}
             onClose={() => setDetail(null)}
             onStatus={s => setStatus(detail, s)}
-            onExport={() => exportReportPdf(detail)}
           />
         )}
       </AnimatePresence>
@@ -697,14 +695,13 @@ function NotificationsView({ reports }: { reports: Report[] }) {
   )
 }
 
-function AdminDashboard({ reports, stats, users, onNavigate, onOpenReport, onStatus, onExport }: {
+function AdminDashboard({ reports, stats, users, onNavigate, onOpenReport, onStatus }: {
   reports: Report[]
   stats: { total: number; pending: number; progress: number; resolved: number }
   users: AdminUser[]
   onNavigate: (v: View) => void
   onOpenReport: (r: Report) => void
   onStatus: (report: Report, status: ReportStatus) => void
-  onExport: () => void
 }) {
   return (
     <div className="page-wrap">
@@ -712,7 +709,7 @@ function AdminDashboard({ reports, stats, users, onNavigate, onOpenReport, onSta
         eyebrow="ADMIN CONTROL CENTER"
         title="Admin Dashboard"
         text="Review community reports and keep environmental issues moving toward resolution."
-        action={<div className="heading-actions"><button className="button button-plain" onClick={onExport}><Download size={16} /> Export PDF</button><button className="button button-dark" onClick={() => onNavigate('Reports')}><FileText size={16} /> Manage reports</button></div>}
+        action={<button className="button button-dark" onClick={() => onNavigate('Reports')}><FileText size={16} /> Manage reports</button>}
       />
       <div className="welcome-strip">
         <div className="welcome-mark"><ShieldCheck size={19} /></div>
@@ -783,86 +780,70 @@ function ReportForm({ user, onSubmit, onLogin, busy }: {
   busy: boolean
 }) {
   const [photoName, setPhotoName] = useState('')
+  const [location, setLocation] = useState('')
+  const [gmapsUrl, setGmapsUrl] = useState('')
+  const [coordinates, setCoordinates] = useState<{ latitude: number; longitude: number } | null>(null)
+  const [locationState, setLocationState] = useState<'idle' | 'detecting' | 'found' | 'error'>('idle')
+  const [locationMessage, setLocationMessage] = useState('')
+
+  async function detectLocation() {
+    setLocationState('detecting')
+    setLocationMessage('Requesting your location…')
+    try {
+      const found = await getCurrentLocation()
+      setCoordinates(found)
+      setGmapsUrl(mapsUrl(found))
+      setLocationMessage('Location found successfully.')
+      setLocationState('found')
+      try {
+        const address = await reverseGeocode(found)
+        setLocation(formatAddress(address.address, address.displayName || `${found.latitude.toFixed(5)}, ${found.longitude.toFixed(5)}`))
+      } catch {
+        setLocation(`${found.latitude.toFixed(5)}, ${found.longitude.toFixed(5)}`)
+        setLocationMessage('Coordinates found. Address lookup is unavailable, so you can edit the location manually.')
+      }
+    } catch (error) {
+      setLocationState('error')
+      setLocationMessage(error instanceof Error ? error.message : 'Unable to fetch your location. You can enter it manually.')
+    }
+  }
+
   return (
     <div className="page-wrap">
       <PageTitle eyebrow="HELP YOUR COMMUNITY" title="Report an issue" text="A few details can help make a local environmental concern visible." />
       {!user && (
         <div className="signin-hint">
           <ShieldCheck size={19} />
-          <span>
-            <b>Sign in to submit your report</b>
-            <small>Your account helps keep the community reporting process clear and accountable.</small>
-          </span>
+          <span><b>Sign in to submit your report</b><small>Your account helps keep the community reporting process clear and accountable.</small></span>
           <button className="button button-dark button-small" onClick={onLogin}><LogIn size={15} /> Log in</button>
         </div>
       )}
       <form className="report-form panel" onSubmit={onSubmit}>
-        <div className="form-intro">
-          <div className="form-step">01 <span> / 01</span></div>
-          <div>
-            <h2>What did you notice?</h2>
-            <p>Share the details you know. You can add a photo if it helps explain the issue.</p>
-          </div>
-        </div>
+        <div className="form-intro"><div className="form-step">01 <span> / 01</span></div><div><h2>What did you notice?</h2><p>Share the details you know. You can add a photo if it helps explain the issue.</p></div></div>
         <div className="form-grid">
-          <label className="field">
-            <span>Issue type <i>*</i></span>
-            <select name="type" required defaultValue="">
-              <option value="" disabled>Choose a category</option>
-              {issueTypes.map(x => <option key={x} value={x}>{x}</option>)}
-            </select>
-          </label>
-          <label className="field">
-            <span>Severity <i>*</i></span>
-            <select name="severity" required defaultValue="Medium">
-              <option>Low</option><option>Medium</option><option>High</option>
-            </select>
-          </label>
-          <label className="field field-full">
-            <span>Short description <i>*</i></span>
-            <textarea name="description" required minLength={12} maxLength={1000} placeholder="What is happening? Add any details that could help someone understand the issue." rows={4} />
-            <small>Keep it clear and respectful. Avoid sharing anyone’s private information.</small>
-          </label>
-          <label className="field field-full">
-            <span>Location or area <i>*</i></span>
-            <div className="input-icon"><MapPin size={17} /><input name="location" required maxLength={180} placeholder="Street, landmark, neighborhood" /></div>
-          </label>
-          <label className="field field-full">
-            <span>Google Maps location <i>*</i></span>
-            <div className="input-icon"><ExternalLink size={17} /><input name="gmaps_url" type="url" required placeholder="Paste the Google Maps link for the issue location" /></div>
-            <small>Open Google Maps, choose the exact place, tap Share, and paste the link here.</small>
-          </label>
-          <label className="field">
-            <span>Date noticed</span>
-            <input type="date" name="date" defaultValue={new Date().toISOString().slice(0, 10)} />
-          </label>
-          <div className="field">
-            <span>Photo <small>(optional)</small></span>
-            <label className="upload-box">
-              <Upload size={17} />
-              <span>{photoName || 'Choose a photo to add'}</span>
-              <input type="file" name="photo" accept="image/*" onChange={e => setPhotoName(e.target.files?.[0]?.name || '')} />
-            </label>
+          <label className="field"><span>Issue type <i>*</i></span><select name="type" required defaultValue=""><option value="" disabled>Choose a category</option>{issueTypes.map(x => <option key={x} value={x}>{x}</option>)}</select></label>
+          <label className="field"><span>Severity <i>*</i></span><select name="severity" required defaultValue="Medium"><option>Low</option><option>Medium</option><option>High</option></select></label>
+          <label className="field field-full"><span>Short description <i>*</i></span><textarea name="description" required minLength={12} maxLength={1000} placeholder="What is happening? Add any details that could help someone understand the issue." rows={4} /><small>Keep it clear and respectful. Avoid sharing anyone’s private information.</small></label>
+          <label className="field field-full"><span>Location or area <i>*</i></span><div className="input-icon"><MapPin size={17} /><input name="location" required maxLength={180} placeholder="Street, landmark, neighborhood" value={location} onChange={e => setLocation(e.target.value)} /></div></label>
+          <div className="field field-full location-capture">
+            <span>Share your exact location</span>
+            <button type="button" className="button button-plain location-button" onClick={detectLocation} disabled={locationState === 'detecting'}><MapPin size={16} /> {locationState === 'detecting' ? 'Detecting location…' : 'Use My Current Location'}</button>
+            <small className={locationState === 'error' ? 'location-error' : locationState === 'found' ? 'location-success' : ''} role={locationState === 'error' ? 'alert' : 'status'}>{locationMessage || 'Location is requested only after you click the button. Manual entry remains available.'}</small>
+            <input type="hidden" name="latitude" value={coordinates?.latitude ?? ''} />
+            <input type="hidden" name="longitude" value={coordinates?.longitude ?? ''} />
           </div>
-          <details className="coordinate-details field-full">
-            <summary><MapPin size={14} /> Add exact map coordinates <span>(optional)</span><ChevronDown size={14} /></summary>
-            <div className="coordinate-grid">
-              <label className="field"><span>Latitude</span><input name="latitude" type="number" min="-90" max="90" step="any" placeholder="e.g. 19.0760" /></label>
-              <label className="field"><span>Longitude</span><input name="longitude" type="number" min="-180" max="180" step="any" placeholder="e.g. 72.8777" /></label>
-            </div>
-          </details>
+          <label className="field field-full"><span>Google Maps location <i>*</i></span><div className="input-icon"><ExternalLink size={17} /><input name="gmaps_url" type="url" required placeholder="Use location detection or paste a Google Maps link" value={gmapsUrl} onChange={e => setGmapsUrl(e.target.value)} /></div><small>{gmapsUrl ? <a href={gmapsUrl} target="_blank" rel="noreferrer">Open detected location in Google Maps</a> : 'Open Google Maps, choose the exact place, tap Share, and paste the link here.'}</small></label>
+          <label className="field"><span>Date noticed</span><input type="date" name="date" defaultValue={new Date().toISOString().slice(0, 10)} /></label>
+          <div className="field"><span>Photo</span><label className="upload-box"><Upload size={17} /><span>{photoName || 'Choose a photo to add'}</span><input type="file" name="photo" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" onChange={e => setPhotoName(e.target.files?.[0]?.name || '')} /></label></div>
         </div>
-        <div className="form-footer">
-          <span><ShieldCheck size={16} /> Your report will be reviewed by the community team.</span>
-          <button className="button button-dark" disabled={busy}>{busy ? 'Sending report…' : 'Submit report'} {!busy && <ArrowRight size={16} />}</button>
-        </div>
+        <div className="form-footer"><span><ShieldCheck size={16} /> Your report will be reviewed by the community team.</span><button className="button button-dark" disabled={busy}>{busy ? 'Sending report…' : 'Submit report'} {!busy && <ArrowRight size={16} />}</button></div>
       </form>
       <p className="form-footnote"><i>*</i> Required fields · Reports should describe real local concerns.</p>
     </div>
   )
 }
 
-function ReportsView({ reports, search, setSearch, status, setStatus, issueType, setIssueType, onOpen, onCreate, onExport }: {
+function ReportsView({ reports, search, setSearch, status, setStatus, issueType, setIssueType, onOpen, onCreate }: {
   reports: Report[]
   search: string
   setSearch: (s: string) => void
@@ -872,7 +853,6 @@ function ReportsView({ reports, search, setSearch, status, setStatus, issueType,
   setIssueType: (s: string) => void
   onOpen: (r: Report) => void
   onCreate: () => void
-  onExport: () => void
 }) {
   return (
     <div className="page-wrap">
@@ -880,7 +860,7 @@ function ReportsView({ reports, search, setSearch, status, setStatus, issueType,
         eyebrow="THE NEIGHBORHOOD JOURNAL"
         title="Community reports"
         text="Browse issues shared by people in your area."
-        action={<div className="heading-actions"><button className="button button-plain" onClick={onExport}><Download size={16} /> Export PDF</button><button className="button button-dark" onClick={onCreate}><Plus size={16} /> New report</button></div>}
+        action={<button className="button button-dark" onClick={onCreate}><Plus size={16} /> New report</button>}
       />
       <div className="toolbar panel">
         <div className="search-box">
@@ -958,7 +938,7 @@ function CityLayer({ level, state, onSelect }: { level: 'india' | 'state' | 'cit
 
 function IssueMarkers({ issues, onOpen }: { issues: EnvironmentalIssue[]; onOpen: (issue: EnvironmentalIssue) => void }) { const map = useMap(); const [zoom, setZoom] = useState(map.getZoom()); useMapEvents({ zoomend: () => setZoom(map.getZoom()) }); const clusters = zoom < 12 ? Object.values(issues.reduce<Record<string, { lat: number; lng: number; items: EnvironmentalIssue[] }>>((acc, issue) => { const key = `${Math.floor(issue.latitude * 20)}-${Math.floor(issue.longitude * 20)}`; const group = acc[key] || { lat: 0, lng: 0, items: [] }; group.lat += issue.latitude; group.lng += issue.longitude; group.items.push(issue); acc[key] = group; return acc }, {})).map(group => ({ ...group, lat: group.lat / group.items.length, lng: group.lng / group.items.length })) : issues.map(issue => ({ lat: issue.latitude, lng: issue.longitude, items: [issue] })); return <>{clusters.map(cluster => <CircleMarker key={cluster.items.map(item => item.id).join('-')} center={[cluster.lat, cluster.lng]} radius={cluster.items.length > 1 ? 15 : 8} pathOptions={{ color: '#fff', weight: 2, fillColor: cluster.items.length > 1 ? '#173f63' : cluster.items[0].category === 'Air Pollution' ? '#c94c42' : '#2c698a', fillOpacity: .96 }} eventHandlers={{ click: () => cluster.items.length === 1 && onOpen(cluster.items[0]) }}><Popup>{cluster.items.length > 1 ? <div className="map-popup"><b>{cluster.items.length} issue reports</b><span>Zoom in to inspect exact road locations.</span></div> : <IssuePopup issue={cluster.items[0]} />}</Popup></CircleMarker>)}</> }
 
-function IssuePopup({ issue }: { issue: EnvironmentalIssue }) { return <div className="map-popup issue-popup">{issue.imageUrl ? <img src={issue.imageUrl} alt="Report" /> : <div className="issue-image-placeholder">No report image attached</div>}<b>{issue.title}</b><span>{issue.category} · {issue.status}</span><span>{issue.description}</span><small><strong>GPS:</strong> {issue.latitude.toFixed(5)}, {issue.longitude.toFixed(5)}</small><small><strong>Road:</strong> {issue.roadName}, {issue.locality}</small><small><strong>Date:</strong> {readableDate(issue.createdAt)}</small></div> }
+function IssuePopup({ issue }: { issue: EnvironmentalIssue }) { return <div className="map-popup issue-popup">{issue.imageUrl ? <img src={mediaUrl(issue.imageUrl)} alt="Report" /> : <div className="issue-image-placeholder">No report image attached</div>}<b>{issue.title}</b><span>{issue.category} · {issue.status}</span><span>{issue.description}</span><small><strong>GPS:</strong> {issue.latitude.toFixed(5)}, {issue.longitude.toFixed(5)}</small><small><strong>Road:</strong> {issue.roadName}, {issue.locality}</small><small><strong>Date:</strong> {readableDate(issue.createdAt)}</small></div> }
 
 function StateDetail({ state, reports, onClose }: { state: StateIssueData; reports: EnvironmentalIssue[]; onClose: () => void }) { const issue = nationalIssues.find(item => item.state === state.stateName); return <div className="state-detail"><div className="state-detail-head"><div><span className="eyebrow">STATE / UNION TERRITORY</span><h2>{state.stateName}</h2></div><button className="panel-close" onClick={onClose} aria-label="Close state detail"><X size={16} /></button></div><div className="severity-banner"><span>{state.severity.toUpperCase()} ISSUE LEVEL</span><b>{issue?.issue}</b></div><div className="state-stats"><div><b>{reports.length}</b><small>Total reports</small></div><div><b>{reports.filter(r => r.status === 'Resolved').length}</b><small>Resolved</small></div><div><b>{reports.filter(r => r.status !== 'Resolved').length}</b><small>Pending</small></div></div><div className="detail-section"><span className="eyebrow">MAIN ENVIRONMENTAL ISSUE</span><p>{issue?.summary || 'No issue summary available.'}</p></div><div className="detail-section"><span className="eyebrow">RECENT COMMUNITY REPORTS</span>{reports.length ? reports.slice(0, 3).map(report => <div className="mini-report" key={report.id}><b>{report.category} · {report.status}</b><small>{report.roadName}, {report.locality}</small></div>) : <p className="detail-muted">No exact issue reports in this state feed.</p>}</div><div className="sdg-impact"><span className="eyebrow">SDG GOALS IMPACTED</span><div><span>SDG 3 · Good health</span><span>SDG 6 · Clean water</span><span>SDG 11 · Sustainable cities</span><span>SDG 13 · Climate action</span></div></div><a className="source-link" href={issue?.sourceUrl} target="_blank" rel="noreferrer">View source: {issue?.source} <ExternalLink size={13} /></a></div> }
 
@@ -1138,13 +1118,11 @@ function AuthModal({ mode, setMode, busy, error, apiReady, onClose, onSubmit }: 
   )
 }
 
-function ReportModal({ report, canModerate, canExport, onClose, onStatus, onExport }: {
+function ReportModal({ report, canModerate, onClose, onStatus }: {
   report: Report
   canModerate: boolean
-  canExport: boolean
   onClose: () => void
   onStatus: (s: ReportStatus) => void
-  onExport: () => void
 }) {
   const updates = report.updates || [{ id: 'created', report_id: report.id, changed_by: report.submitter || 'Community member', old_status: null, new_status: 'Pending' as ReportStatus, note: 'Report shared with the community.', created_at: report.created_at }]
   return (
@@ -1156,7 +1134,6 @@ function ReportModal({ report, canModerate, canExport, onClose, onStatus, onExpo
           <span className={`status-pill ${statusClass[report.status]}`}>{report.status}</span>
         </div>
         <div className="detail-actions">
-          {canExport && <button className="button button-plain button-small" onClick={onExport}><Download size={15} /> Export PDF</button>}
           {report.gmaps_url && <a className="button button-plain button-small" href={report.gmaps_url} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Open in Google Maps</a>}
         </div>
         <div className="detail-title-line">
@@ -1167,6 +1144,7 @@ function ReportModal({ report, canModerate, canExport, onClose, onStatus, onExpo
           </div>
         </div>
         <p className="detail-description">{report.description}</p>
+        {report.photo_url && <div className="detail-photo"><img src={mediaUrl(report.photo_url)} alt={`Uploaded evidence for ${report.id}`} onError={event => { event.currentTarget.style.display = 'none'; event.currentTarget.parentElement?.classList.add('photo-load-failed') }} /><span>Uploaded evidence could not be loaded.</span></div>}
         <div className="detail-location">
           <MapPin size={17} />
           <span>

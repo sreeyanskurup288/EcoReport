@@ -4,6 +4,11 @@ import type { AdminUser, Report, User, ReportStatus } from './types'
 // Deployments can still override this with VITE_API_BASE_URL.
 const base = (import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:4000' : '')).replace(/\/$/, '')
 export const apiConfigured = Boolean(base)
+export function mediaUrl(path: string | null | undefined) {
+  if (!path) return ''
+  if (/^https?:\/\//i.test(path)) return path
+  return `${base}${path.startsWith('/') ? path : `/${path}`}`
+}
 export class ApiError extends Error { constructor(message: string, public status?: number) { super(message) } }
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!base) throw new ApiError('Backend not connected yet. Set VITE_API_BASE_URL to your running Express API to enable accounts and report submission.')
